@@ -8,6 +8,7 @@ from discord.ext import commands
 intents = discord.Intents.default()
 intents.messages = True  # メッセージ関連のイベントを有効化
 intents.message_content = True
+intents.members = True
 
 class CustomHelpCommand(commands.HelpCommand):
     def __init__(self):
@@ -50,6 +51,36 @@ def load_data():
 def save_data():
     with open(data_file, "w") as file:
         json.dump(user_data, file, ensure_ascii=False, indent=4)
+
+# user_dataがない人のuser_dataを作成する関数
+def ensure_user_data(user_id, default_rating=DEFAULT_RATING):
+    """
+    指定されたユーザーIDがuser_dataに存在しない場合、初期データを作成する。
+    
+    Args:
+        user_id (str): 確認するユーザーID。
+        user_data (dict): ユーザーデータの辞書。
+        default_rating (int, optional): 初期レート。
+    """
+    
+    if user_id not in user_data:
+        user_data[user_id] = {
+            "rating": default_rating,
+            "ban_stages": [],
+            "current_opponent": None  # current_opponentの初期値も追加
+        }
+        save_data()
+
+# matching_roomの相手を見つけ出す関数
+def get_opponent(user_id, room_data):
+    # ユーザーが含まれるマッチを検索し、見つからなかった場合はNoneを返す
+    match_info = next((match for match in room_data.values() if user_id in match["players"]), None)
+    if match_info:
+        opponent = match_info["players"][1] if match_info["players"][0] == user_id else match_info["players"][0]
+        print(f"User ID: {user_id}, Opponent found: {opponent}")
+        return opponent
+    print(f"User ID: {user_id} has no match found.")
+    return None
 
 @bot.event
 async def on_ready():
@@ -94,10 +125,8 @@ async def win(ctx, winner: discord.Member):
     user_id = str(ctx.author.id)
 
     # ユーザーと勝者のデータがなければ初期データを作成
-    if user_id not in user_data:
-        user_data[user_id] = {"rating": DEFAULT_RATING, "ban_stages": []}
-    if winner_id not in user_data:
-        user_data[winner_id] = {"rating": DEFAULT_RATING, "ban_stages": []}
+    ensure_user_data(user_id)
+    ensure_user_data(winner_id)
 
     # レート上昇値を計算
     threshold = 1.0
@@ -111,6 +140,10 @@ async def win(ctx, winner: discord.Member):
 
     # 勝者のレートを更新
     user_data[winner_id]["rating"] += increase
+
+    # 直近の対戦相手に設定（連戦回避のため）
+    user_data[user_id]["current_opponent"] = winner_id
+    user_data[winner_id]["current_opponent"] = user_id
 
     save_data()
 
@@ -130,9 +163,7 @@ async def player(ctx, member: discord.Member = None):
 
     user_id = str(member.id)
 
-    if user_id not in user_data:
-        user_data[user_id] = {"rating": DEFAULT_RATING, "ban_stages": []}
-        save_data()  # 新しいユーザーなら保存
+    ensure_user_data(user_id)
     
     # レートとperfを計算
     ban_stages = user_data[user_id]["ban_stages"]
@@ -170,8 +201,7 @@ async def player(ctx, member: discord.Member = None):
 async def ban_stage(ctx, stage1: str = None, stage2: str = None):
     user_id = str(ctx.author.id)
 
-    if user_id not in user_data:
-        user_data[user_id] = {"rating": DEFAULT_RATING, "ban_stages": []}
+    ensure_user_data(user_id)
 
     valid_stages = {"終点", "戦場", "ポケモンスタジアム2", "村と街", "小戦場", "ホロウバスティオン", "すま村"}
 
@@ -184,15 +214,132 @@ async def ban_stage(ctx, stage1: str = None, stage2: str = None):
 
     if stage1 and stage2:
         user_data[user_id]["ban_stages"] = [stage1, stage2]
-        await ctx.send(f'The rejection stages for {ctx.author.display_name} have been registered for {stage1} and {stage2}.')
+        await ctx.send(f'The rejection stages for {ctx.author.display_name} : **{stage1}** and **{stage2}**')
     elif stage1:
         user_data[user_id]["ban_stages"] = [stage1]
-        await ctx.send(f'The rejection stages for {ctx.author.display_name} have been registered for {stage1}')
+        await ctx.send(f'The rejection stages for {ctx.author.display_name} : **{stage1}**')
     else:
         user_data[user_id]["ban_stages"] = []
         await ctx.send(f"{ctx.author.display_name} rejection stage has been removed.")
 
     save_data()
+
+@bot.command(help="マッチング待機リストに参加し、条件が合えばマッチングを行います。")
+async def match(ctx):
+    user_id = str(ctx.author.id)
+    ensure_user_data(user_id)
+
+    # JSONファイルを読み込む
+    with open("matching_standby.json", "r") as file:
+        standby_data = json.load(file)
+
+    with open("matching_room.json", "r") as file:
+        room_data = json.load(file)
+
+    with open("user_data.json", "r") as file:
+        user_data = json.load(file)
+
+    # マッチング中であるか確認
+    if any(user_id in match["players"] for match in room_data.values()):
+        match_info = next(match for match in room_data.values() if user_id in match["players"])
+        await ctx.send(f"あなたは既にマッチング中です。相手: <@{get_opponent(user_id, room_data)}>")
+        return
+
+    # マッチング待機リストに追加
+    if user_id not in standby_data:
+        standby_data.append(user_id)
+        with open("matching_standby.json", "w") as file:
+            json.dump(standby_data, file)
+        await ctx.send("マッチング待機リストに追加されました。")
+
+    # 他の待機中ユーザーを探す
+    for opponent_id in standby_data:
+        if opponent_id != user_id and user_data[opponent_id]["current_opponent"] != user_id:
+            # マッチング作成
+            match_id = f"{user_id}_{opponent_id}"
+            room_data[match_id] = {"players": [user_id, opponent_id]}
+
+            # JSONファイルに保存
+            with open("matching_room.json", "w") as file:
+                json.dump(room_data, file)
+            with open("user_data.json", "w") as file:
+                json.dump(user_data, file)
+            
+            # 待機リストから削除
+            standby_data.remove(user_id)
+            standby_data.remove(opponent_id)
+            with open("matching_standby.json", "w") as file:
+                json.dump(standby_data, file)
+
+            await ctx.send(f"<@{user_id}>と<@{opponent_id}>がマッチングしました！")
+            await ctx.send(f"レート情報:\n<@{user_id}>: {user_data[user_id]['rating']}, 拒否ステージ: {', '.join(user_data[user_id]['ban_stages'])}\n<@{opponent_id}>: {user_data[opponent_id]['rating']}, 拒否ステージ: {', '.join(user_data[opponent_id]['ban_stages'])}")
+            return
+
+    await ctx.send("マッチングできる相手がいません。しばらくお待ちください。")
+
+@bot.command(help="マッチングをキャンセルします。")
+async def match_cancel(ctx):
+    user_id = str(ctx.author.id)
+
+    # JSONファイルを読み込む
+    with open("matching_standby.json", "r") as file:
+        standby_data = json.load(file)
+
+    with open("matching_room.json", "r") as file:
+        room_data = json.load(file)
+
+    if user_id in standby_data:
+        # 待機リストから削除
+        standby_data.remove(user_id)
+        with open("matching_standby.json", "w") as file:
+            json.dump(standby_data, file)
+        await ctx.send("マッチング待機リストから削除されました。")
+        return
+
+    if any(user_id in match["players"] for match in room_data.values()):
+        # マッチング解消の提案
+        match_id = next(match_id for match_id, match in room_data.items() if user_id in match["players"])
+        if "cancel_proposals" not in room_data[match_id]:
+            room_data[match_id]["cancel_proposals"] = []
+
+        # すでに提案しているか確認
+        if user_id in room_data[match_id]["cancel_proposals"]:
+            opponent_id = get_opponent(user_id, room_data)
+            opponent = ctx.guild.get_member(int(opponent_id))
+
+            if opponent is not None:
+                await ctx.send(f"既にマッチング解消を提案しています。 {opponent.mention} の同意をお待ちください。")
+            else:
+                await ctx.send(f"既にマッチング解消を提案していますが、対戦相手のユーザー情報を取得できませんでした。")
+            return
+
+        room_data[match_id]["cancel_proposals"].append(user_id)
+
+        # 両者が提案していればマッチング解消
+        if len(room_data[match_id]["cancel_proposals"]) == 2:
+            opponent_id = get_opponent(user_id, room_data)
+            opponent = ctx.guild.get_member(int(opponent_id))
+            del room_data[match_id]
+            with open("matching_room.json", "w") as file:
+                json.dump(room_data, file)
+            if opponent is not None:
+                await ctx.send(f"<@{user_id}> と {opponent.mention} のマッチングが解消されました。")
+            else:
+                await ctx.send(f"<@{user_id}> のマッチングが解消されましたが、対戦相手のユーザー情報を取得できませんでした。")
+        else:
+            opponent_id = get_opponent(user_id, room_data)
+            opponent = ctx.guild.get_member(int(opponent_id))
+            with open("matching_room.json", "w") as file:
+                json.dump(room_data, file)
+            if opponent is not None:
+                await ctx.send(f"マッチング解消の提案がされました。 {opponent.mention} の同意が必要です。")
+            else:
+                await ctx.send(f"マッチング解消の提案がされましたが、対戦相手のユーザー情報を取得できませんでした。")
+        return
+
+    await ctx.send("あなたは現在マッチング待機リストにもマッチングにも参加していません。")
+
+
 
 # Botのトークンを貼り付けて実行
 bot.run(DISCORD_BOT_TOKEN)
