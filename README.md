@@ -5,6 +5,7 @@
 ## ディレクトリ構造
 ```
 .
+├── LICENSE
 ├── README.md
 ├── data
 │   ├── matching_room.json
@@ -14,7 +15,7 @@
     ├── initialize.py
     └── main.py
 
-3 directories, 6 files
+3 directories, 7 files
 ```
 ## 主なコマンド
 ### !win (プレイヤー名)
@@ -42,3 +43,5 @@
 - `!match`使用後に使用できます
 - マッチング待機リストで使用すると、マッチングしたときに部屋IDが表示されます
 - マッチング成立後に使用すると、部屋IDを含めたマッチングの情報が再表示されます
+## ライセンス
+このプロジェクトは[MIT License](LICENSE)のもとで公開されています。
