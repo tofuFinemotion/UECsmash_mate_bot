@@ -11,12 +11,10 @@
 │   ├── matching_standby.json
 │   └── user_data.json
 └── src
-    ├── add_current_opponent.py
-    ├── bot_test.py
     ├── initialize.py
     └── main.py
 
-3 directories, 8 files
+3 directories, 6 files
 ```
 ## 主なコマンド
 ### !win (プレイヤー名)
