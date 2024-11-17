@@ -1,9 +1,23 @@
 # UECsmash_mate_bot
 ## 概要
-- discordサーバー内で運用できるスマブラ対戦用レーティングシステムです。
+- discordサーバー内で運用できるスマブラ対戦用レーティングシステムです
 - 現状ではローカル環境での運用を想定しています
 ## ディレクトリ構造
+```
+.
+├── README.md
+├── data
+│   ├── matching_room.json
+│   ├── matching_standby.json
+│   └── user_data.json
+└── src
+    ├── add_current_opponent.py
+    ├── bot_test.py
+    ├── initialize.py
+    └── main.py
 
+3 directories, 8 files
+```
 ## 主なコマンド
 ### !win (プレイヤー名)
 - プレイヤー名で指定された人のレートを上昇させます
